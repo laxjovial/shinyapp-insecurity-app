@@ -1,12 +1,27 @@
+# Load necessary libraries
 library(dplyr)
 library(stringr)
 library(lubridate)
 
+#' Load and Clean Insecurity Data
+#'
+#' This function reads a CSV file, cleans column names,
+#' classifies incidents based on keywords, and converts
+#' date columns to the correct format.
+#'
+#' @param filepath A character string for the path to the CSV file.
+#' @return A cleaned and prepared data frame.
 load_and_clean_data <- function(filepath) {
   # Read the data from the specified filepath
   insec <- read.csv(filepath, stringsAsFactors = FALSE)
 
-  # Clean column names to be more R-friendly
+  # Explicitly rename columns to more R-friendly names before cleaning
+  if ("Start.date" %in% names(insec) && "End.date" %in% names(insec)) {
+    names(insec)[names(insec) == "Start.date"] <- "Start_date"
+    names(insec)[names(insec) == "End.date"] <- "End_date"
+  }
+  
+  # Clean column names
   names(insec) <- make.names(names(insec), unique = TRUE)
 
   # The rest of the data cleaning and preparation logic
@@ -66,11 +81,11 @@ load_and_clean_data <- function(filepath) {
       )
     )
 
-  # Convert 'Start.date' and 'End.date' to Date format (from d/m/y)
+  # Convert 'Start_date' and 'End_date' to Date format
   insec$Start_date <- as.Date(insec$Start_date, format = "%d/%m/%Y")
   insec$End_date <- as.Date(insec$End_date, format = "%d/%m/%Y")
 
-  # Extract Month and Year from 'Start.date' and create a Date object for it (e.g., first day of the month)
+  # Extract Month and Year from 'Start_date'
   insec$month_year <- as.Date(format(insec$Start_date, "%Y-%m-01"))
 
   return(insec)
