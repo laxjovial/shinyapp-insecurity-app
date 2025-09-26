@@ -12,7 +12,7 @@ source("R/functions.R")
 # Define the UI
 ui <- fluidPage(
   titlePanel("Cause of Deaths Over Time"),
-
+  
   sidebarLayout(
     sidebarPanel(
       fileInput("file1", "Upload CSV File",
@@ -66,7 +66,8 @@ ui <- fluidPage(
 
 # Define the server logic
 server <- function(input, output, session) {
-
+  
+  # Reactive expression to load data from file or use default
   data <- reactive({
     if (is.null(input$file1)) {
       # Load default data if no file is uploaded
@@ -76,53 +77,58 @@ server <- function(input, output, session) {
       load_and_clean_data(input$file1$datapath)
     }
   })
-
+  
+  # Reactive expression to filter the data based on user selections
+  filtered_main_data <- reactive({
+    df <- data()
+    
+    # Filter by state
+    if (!is.null(input$state) && !("All" %in% input$state)) {
+      df <- df %>% filter(State %in% input$state)
+    }
+    
+    # Filter by cause
+    if (!is.null(input$cause) && !("All" %in% input$cause)) {
+      df <- df %>% filter(deathclass %in% input$cause)
+    }
+    
+    # Filter by date range
+    if (!is.null(input$daterange)) {
+      df <- df %>%
+        filter(Start_date >= input$daterange[1] & Start_date <= input$daterange[2])
+    }
+    
+    df
+  })
+  
   # Update UI elements based on loaded data
   observe({
     df <- data()
-    updateSelectizeInput(session, "state", choices = c("All", unique(df$State)), selected = "All")
-    updateSelectizeInput(session, "cause", choices = c("All", unique(df$deathclass)), selected = "All")
-    updateDateRangeInput(session, "daterange", start = min(df$Start_date, na.rm = TRUE), end = max(df$End_date, na.rm = TRUE))
-    updateSelectInput(session, "bivariate_state", choices = unique(df$State))
-    updateSelectInput(session, "bivariate_cause", choices = unique(df$deathclass))
+    updateSelectizeInput(session, "state", choices = c("All", sort(unique(df$State))), selected = "All")
+    updateSelectizeInput(session, "cause", choices = c("All", sort(unique(df$deathclass))), selected = "All")
+    updateDateRangeInput(session, "daterange",
+                         start = min(df$Start_date, na.rm = TRUE),
+                         end = max(df$End_date, na.rm = TRUE))
+    updateSelectInput(session, "bivariate_state", choices = sort(unique(df$State)))
+    updateSelectInput(session, "bivariate_cause", choices = sort(unique(df$deathclass)))
   })
-
-  filtered_data <- reactive({
-    df <- data()
-
-    # Filter by state
-    if (!("All" %in% input$state)) {
-      df <- df %>% filter(State %in% input$state)
-    }
-
-    # Filter by cause
-    if (!("All" %in% input$cause)) {
-      df <- df %>% filter(deathclass %in% input$cause)
-    }
-
-    # Filter by date range
-    df <- df %>%
-      filter(Start_date >= input$daterange[1], End_date <= input$daterange[2])
-
-    # Group and summarise
-    df %>%
-      group_by(month_year, State, deathclass) %>%
+  
+  # Time Series Plot
+  output$deathPlot <- renderPlot({
+    plot_data <- filtered_main_data() %>%
+      group_by(month_year, deathclass) %>%
       summarise(Deaths = sum(Number.._of_deaths, na.rm = TRUE)) %>%
       ungroup()
-  })
-
-  output$deathPlot <- renderPlot({
-    plot_data <- filtered_data()
-
+    
     title_text <- "Deaths Over Time"
-    if (!("All" %in% input$state)) {
+    if (!is.null(input$state) && !("All" %in% input$state)) {
       title_text <- paste(title_text, "in", paste(input$state, collapse = ", "))
     }
-    if (!("All" %in% input$cause)) {
+    if (!is.null(input$cause) && !("All" %in% input$cause)) {
       title_text <- paste(title_text, "from", paste(input$cause, collapse = ", "))
     }
-
-    ggplot(plot_data, aes(x = month_year, y = Deaths, color = State, group = interaction(State, deathclass))) +
+    
+    ggplot(plot_data, aes(x = month_year, y = Deaths, color = deathclass, group = deathclass)) +
       geom_line(size = 1.2) +
       geom_point(size = 2) +
       labs(
@@ -134,73 +140,80 @@ server <- function(input, output, session) {
       theme(axis.text.x = element_text(angle = 45, hjust = 1),
             legend.position = "bottom")
   })
-
+  
   # Univariate Analysis
   output$summary <- renderPrint({
-    summary(data())
+    summary(filtered_main_data())
   })
-
+  
   output$deathsByCause <- renderPlot({
-    cause_data <- data() %>%
+    cause_data <- filtered_main_data() %>%
       group_by(deathclass) %>%
       summarise(TotalDeaths = sum(Number.._of_deaths, na.rm = TRUE))
-
+    
     ggplot(cause_data, aes(x = reorder(deathclass, -TotalDeaths), y = TotalDeaths)) +
       geom_bar(stat = "identity", fill = "skyblue") +
       labs(title = "Total Deaths by Cause", x = "Cause of Death", y = "Total Deaths") +
+      theme_classic() +
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
   })
-
+  
   output$deathsByState <- renderPlot({
-    state_data <- data() %>%
+    state_data <- filtered_main_data() %>%
       group_by(State) %>%
       summarise(TotalDeaths = sum(Number.._of_deaths, na.rm = TRUE))
-
+    
     ggplot(state_data, aes(x = reorder(State, -TotalDeaths), y = TotalDeaths)) +
       geom_bar(stat = "identity", fill = "lightgreen") +
       labs(title = "Total Deaths by State", x = "State", y = "Total Deaths") +
+      theme_classic() +
       theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
   })
-
+  
   # Bivariate Analysis
   output$topCausesInState <- renderPlot({
+    req(input$bivariate_state)
     state_cause_data <- data() %>%
       filter(State == input$bivariate_state) %>%
       group_by(deathclass) %>%
       summarise(TotalDeaths = sum(Number.._of_deaths, na.rm = TRUE)) %>%
       arrange(desc(TotalDeaths)) %>%
       top_n(10, TotalDeaths)
-
+    
     ggplot(state_cause_data, aes(x = reorder(deathclass, -TotalDeaths), y = TotalDeaths)) +
       geom_bar(stat = "identity", fill = "salmon") +
-      labs(title = paste("Top 10 Causes of Death in", input$bivariate_state), x = "Cause of Death", y = "Total Deaths") +
+      labs(title = paste("Top Causes of Death in", input$bivariate_state), x = "Cause of Death", y = "Total Deaths") +
+      theme_classic() +
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
   })
-
+  
   output$topStatesForCause <- renderPlot({
+    req(input$bivariate_cause)
     cause_state_data <- data() %>%
       filter(deathclass == input$bivariate_cause) %>%
       group_by(State) %>%
       summarise(TotalDeaths = sum(Number.._of_deaths, na.rm = TRUE)) %>%
       arrange(desc(TotalDeaths)) %>%
       top_n(10, TotalDeaths)
-
+    
     ggplot(cause_state_data, aes(x = reorder(State, -TotalDeaths), y = TotalDeaths)) +
       geom_bar(stat = "identity", fill = "gold") +
-      labs(title = paste("Top 10 States for", input$bivariate_cause), x = "State", y = "Total Deaths") +
+      labs(title = paste("Top States for", input$bivariate_cause), x = "State", y = "Total Deaths") +
+      theme_classic() +
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
   })
-
+  
   output$heatmap <- renderPlot({
     heatmap_data <- data() %>%
       group_by(State, deathclass) %>%
       summarise(TotalDeaths = sum(Number.._of_deaths, na.rm = TRUE)) %>%
       ungroup()
-
+    
     ggplot(heatmap_data, aes(x = State, y = deathclass, fill = TotalDeaths)) +
       geom_tile() +
       scale_fill_gradient(low = "white", high = "red") +
       labs(title = "Heatmap of Deaths by State and Cause", x = "State", y = "Cause of Death") +
+      theme_classic() +
       theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
   })
 }
